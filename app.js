@@ -9,6 +9,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const PORT = process.env.PORT || 3000;
 const uploads = {};
+const prescriptionIds = new Set();
 const VALID_UFS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
   'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
@@ -38,7 +39,7 @@ app.post('/api/prescriptions/upload', upload.single('file'), (req, res) => {
     try {
       await processFile(uploadId, req.file.buffer);
     } catch (error) {
-      const data = uploads.get(uploadId);
+      const data = uploads[uploadId];
 
       if (data) {
         data.status = "failed";
@@ -82,6 +83,7 @@ function createUploadStatus(id) {
 function processFile(uploadId, fileBuffer) {
   try {
     const csvText = fileBuffer.toString('utf-8');
+
     const rows = parse(csvText, {
       columns: true,
       skip_empty_lines: true,
@@ -91,15 +93,32 @@ function processFile(uploadId, fileBuffer) {
     uploads[uploadId].total_records = rows.length;
 
     rows.forEach((row, index) => {
+      const lineNumber = index + 2;
       const result = rowData.safeParse(row);
+
       uploads[uploadId].processed_records += 1;
 
-      if (result.success) {
-        uploads[uploadId].valid_records += 1;
-      } else {
+      if (!result.success) {
         uploads[uploadId].invalid_records += 1;
-        addError(uploadId, index + 2, result.error.issues);
+        addError(uploadId, lineNumber, result.error.issues);
+        return;
       }
+
+      const record = result.data;
+
+      if (prescriptionIds.has(record.id)) {
+        uploads[uploadId].invalid_records += 1;
+        addError(uploadId, lineNumber, [
+          {
+            path: ['id'],
+            message: 'id já existe no sistema'
+          }
+        ]);
+        return;
+      }
+
+      prescriptionIds.add(record.id);
+      uploads[uploadId].valid_records += 1;
     });
 
     uploads[uploadId].status = 'completed';
