@@ -5,7 +5,7 @@
 Este repositório contém **duas versões da API de prescrições médicas**, com objetivos diferentes:
 
 ### 🔹 Versão Simples (este diretório)
-Estudei e utilizei a estrutura mais simples e funcional possivel, centralizando a lógica em um único arquivo, seguindo o conselho do Bruno tech lead (Bruno != Bruno Lobo).
+Estudei e utilizei a estrutura mais simples e funcional possivel, centralizando a lógica em um único arquivo, seguindo o conselho do Petrolini.
 
 Implementação mais direta utilizando:
 - Express.js
