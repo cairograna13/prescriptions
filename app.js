@@ -6,24 +6,24 @@ const { z } = require('zod');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
-
 const PORT = process.env.PORT || 3000;
+
 const uploads = {};
 const prescriptionIds = new Set();
+
 const VALID_UFS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
   'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN',
-  'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+  'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ];
 
-// #region Estrutura de Rotas
 app.get('/', (req, res) => {
   res.json({
     message: 'Prescription API',
     endpoints: {
       upload: 'POST /api/prescriptions/upload',
-      status: 'GET /api/prescriptions/upload/:id'
-    }
+      status: 'GET /api/prescriptions/upload/:id',
+    },
   });
 });
 
@@ -33,23 +33,38 @@ app.post('/api/prescriptions/upload', upload.single('file'), (req, res) => {
   }
 
   const uploadId = randomUUID();
-  createUploadStatus(uploadId);
+
+  let rows;
+  try {
+    rows = parseCsvRows(req.file.buffer);
+  } catch (error) {
+    return res.status(400).json({
+      message: error.message || 'Erro ao ler arquivo CSV',
+    });
+  }
+
+  createUploadStatus(uploadId, rows.length);
 
   setImmediate(async () => {
     try {
-      await processFile(uploadId, req.file.buffer);
+      await processRows(uploadId, rows);
     } catch (error) {
       const data = uploads[uploadId];
-
       if (data) {
-        data.status = "failed";
+        data.status = 'failed';
         data.errors.push({
           line: null,
-          errors: [{ field: "file", message: error.message }]
+          errors: [
+            {
+              field: 'file',
+              message: error.message || 'Erro interno ao processar arquivo',
+            },
+          ],
         });
       }
     }
   });
+
   return res.status(202).json(uploads[uploadId]);
 });
 
@@ -66,32 +81,31 @@ app.get('/api/prescriptions/upload/:id', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
-// #endregion
 
-function createUploadStatus(id) {
+function createUploadStatus(id, totalRecords = 0) {
   uploads[id] = {
     upload_id: id,
     status: 'processing',
-    total_records: 0,
+    total_records: totalRecords,
     processed_records: 0,
     valid_records: 0,
     invalid_records: 0,
-    errors: []
+    errors: [],
   };
 }
 
-function processFile(uploadId, fileBuffer) {
+function parseCsvRows(fileBuffer) {
+  const csvText = fileBuffer.toString('utf-8').replace(/^\uFEFF/, '');
+
+  return parse(csvText, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+  });
+}
+
+function processRows(uploadId, rows) {
   try {
-    const csvText = fileBuffer.toString('utf-8');
-
-    const rows = parse(csvText, {
-      columns: true,
-      skip_empty_lines: true,
-      trim: true
-    });
-
-    uploads[uploadId].total_records = rows.length;
-
     rows.forEach((row, index) => {
       const lineNumber = index + 2;
       const result = rowData.safeParse(row);
@@ -100,7 +114,7 @@ function processFile(uploadId, fileBuffer) {
 
       if (!result.success) {
         uploads[uploadId].invalid_records += 1;
-        addError(uploadId, lineNumber, result.error.issues);
+        addError(uploadId, lineNumber, result.error.issues, row);
         return;
       }
 
@@ -108,12 +122,12 @@ function processFile(uploadId, fileBuffer) {
 
       if (prescriptionIds.has(record.id)) {
         uploads[uploadId].invalid_records += 1;
-        addError(uploadId, lineNumber, [
-          {
-            path: ['id'],
-            message: 'id já existe no sistema'
-          }
-        ]);
+        addError(
+          uploadId,
+          lineNumber,
+          [{ path: ['id'], message: 'id já existe no sistema' }],
+          row,
+        );
         return;
       }
 
@@ -129,51 +143,71 @@ function processFile(uploadId, fileBuffer) {
       errors: [
         {
           field: 'file',
-          message: error.message || 'Erro ao processar arquivo'
-        }
-      ]
+          message: error.message || 'Erro ao processar arquivo',
+        },
+      ],
     });
   }
 }
 
-const rowData = z.object({
-  id: z.string().min(1, 'id é obrigatório'),
-  date: z.string().refine(isValidDate, 'date inválida ou futura'),
-  patient_cpf: z.string().regex(/^\d{11}$/, 'CPF deve ter 11 dígitos'),
-  doctor_crm: z.string().regex(/^\d+$/, 'CRM deve conter apenas números'),
-  doctor_uf: z.string().refine((uf) => VALID_UFS.includes(String(uf).toUpperCase()), 'UF inválida'),
-  medication: z.string().min(1, 'medication é obrigatório'),
-  controlled: z.any(),
-  dosage: z.string().min(1, 'dosage é obrigatório'),
-  frequency: z.coerce.number()
-    .int('frequency deve ser um número inteiro')
-    .positive('frequency deve ser positivo'),
-  duration: z.coerce.number()
-    .positive('duration deve ser positivo')
-    .max(90, 'duration deve ser no máximo 90'),
-  notes: z.string().optional().or(z.literal('')),
-}).transform((data) => ({
-  ...data,
-  doctor_uf: String(data.doctor_uf).toUpperCase(),
-  controlled: parseBoolean(data.controlled),
-  frequency: data.frequency,
-})).superRefine((data, ctx) => {
-  if (data.controlled && (!data.notes || !data.notes.trim())) {
-    ctx.addIssue({
-      code: "custom",
-      path: ['notes'],
-      message: 'Medicamento controlado requer observações'
-    });
-  }
+const rowData = z
+  .object({
+    id: z.string().trim().min(1, 'id é obrigatório'),
+    date: z.string().trim().refine(isValidDate, 'date inválida ou futura'),
+    patient_cpf: z
+      .string()
+      .trim()
+      .regex(/^\d{11}$/, 'CPF deve ter 11 dígitos')
+      .refine(isValidCpf, 'CPF inválido'),
+    doctor_crm: z.string().trim().regex(/^\d+$/, 'CRM deve conter apenas números'),
+    doctor_uf: z
+      .string()
+      .trim()
+      .transform((uf) => uf.toUpperCase())
+      .refine((uf) => VALID_UFS.includes(uf), 'UF inválida'),
+    medication: z.string().trim().min(1, 'medication é obrigatório'),
+    controlled: z.any(),
+    dosage: z.string().trim().min(1, 'dosage é obrigatório'),
+    frequency: z.preprocess(
+      normalizeFrequency,
+      z
+        .string()
+        .min(1, 'frequency é obrigatório')
+        .regex(
+          /^(\d+|\d+\s*\/\s*\d+h)$/,
+          'frequency deve ser número positivo ou no formato 8/8h',
+        ),
+    ),
+    duration: z.coerce
+      .number()
+      .positive('duration deve ser positivo')
+      .max(90, 'duration deve ser no máximo 90'),
+    notes: z.string().optional().or(z.literal('')),
+  })
+  .transform((data) => ({
+    ...data,
+    controlled: parseBoolean(data.controlled),
+    frequency: normalizeFrequency(data.frequency),
+  }))
+  .superRefine((data, ctx) => {
+    if (data.controlled && (!data.notes || !data.notes.trim())) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['notes'],
+        message: 'Medicamento controlado requer observações',
+      });
+    }
 
-  if (data.controlled && data.frequency > 60) {
-    ctx.addIssue({
-      code: "custom",
-      path: ['frequency'],
-      message: 'Medicamento controlado tem frequência máxima de 60'
-    });
-  }
-});
+    const frequencyHours = extractFrequencyHours(data.frequency);
+
+    if (data.controlled && frequencyHours > 60) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['frequency'],
+        message: 'Medicamento controlado tem frequência máxima de 60 horas',
+      });
+    }
+  });
 
 function isValidDate(value) {
   const date = new Date(value);
@@ -189,12 +223,72 @@ function parseBoolean(value) {
   return ['true', '1', 'yes', 'sim'].includes(normalized);
 }
 
-function addError(uploadId, line, issues) {
+function normalizeFrequency(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return String(value);
+  }
+
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (/^\d+$/.test(normalized)) {
+    return normalized;
+  }
+
+  if (/^\d+\s*\/\s*\d+h$/.test(normalized)) {
+    return normalized.replace(/\s+/g, '');
+  }
+
+  return normalized;
+}
+
+function extractFrequencyHours(frequency) {
+  if (/^\d+$/.test(frequency)) {
+    return Number(frequency);
+  }
+
+  const match = frequency.match(/^(\d+)\/(\d+)h$/);
+  if (!match) return Number.NaN;
+
+  return Number(match[2]);
+}
+
+function isValidCpf(cpf) {
+  const cleaned = String(cpf).replace(/\D/g, '');
+
+  if (!/^\d{11}$/.test(cleaned)) return false;
+  if (/^(\d)\1{10}$/.test(cleaned)) return false;
+
+  let sum = 0;
+  for (let i = 0; i < 9; i += 1) {
+    sum += Number(cleaned[i]) * (10 - i);
+  }
+
+  let digit1 = (sum * 10) % 11;
+  if (digit1 === 10) digit1 = 0;
+  if (digit1 !== Number(cleaned[9])) return false;
+
+  sum = 0;
+  for (let i = 0; i < 10; i += 1) {
+    sum += Number(cleaned[i]) * (11 - i);
+  }
+
+  let digit2 = (sum * 10) % 11;
+  if (digit2 === 10) digit2 = 0;
+
+  return digit2 === Number(cleaned[10]);
+}
+
+function addError(uploadId, line, issues, row = {}) {
   uploads[uploadId].errors.push({
     line,
     errors: issues.map((issue) => ({
       field: issue.path.join('.') || 'linha',
-      message: issue.message
-    }))
+      message: issue.message,
+      value: issue.path[0] ? row[issue.path[0]] : row,
+    })),
   });
 }

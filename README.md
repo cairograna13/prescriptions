@@ -1,5 +1,34 @@
 # Prescription API
 
+## 📌 Sobre o Projeto
+
+Este repositório contém **duas versões da API de prescrições médicas**, com objetivos diferentes:
+
+### 🔹 Versão Simples (este diretório)
+Estudei e utilizei a estrutura mais simples e funcional possivel, centralizando a lógica em um único arquivo, seguindo o conselho do Bruno tech lead (Bruno != Bruno Lobo).
+
+Implementação mais direta utilizando:
+- Express.js
+- Zod para validação
+- Processamento de CSV em memória
+
+---
+
+### 🔹 Versão com Arquitetura (diretório separado)
+
+Também foi desenvolvida uma versão mais estruturada utilizando:
+
+- NestJS
+- Separação em camadas (Controller, Service, Store)
+- Validações mais robustas
+- Melhor organização e escalabilidade
+
+Fiz esse segundo mais para me desafiar e utilizar mais ferramentas disponiveis, utilizei os recursos que utilizaria em um dia-a-dia normmal de trabalho.
+
+📂 Repositório da versão arquitetada:
+👉 https://github.com/cairograna13/prescription-api
+
+
 ## Rodando
 
 ```bash
