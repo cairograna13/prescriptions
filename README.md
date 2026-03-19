@@ -18,14 +18,13 @@ http://localhost:3000
 ### Upload do CSV
 
 ```bash
-curl -X POST http://localhost:3000/api/prescriptions/upload \
-  -F "file=@./example.csv"
+curl.exe -X POST "http://localhost:3000/api/prescriptions/upload" -F "file=@.\exemplo.csv"
 ```
 
 ### Consultar status
 
 ```bash
-curl http://localhost:3000/api/prescriptions/upload/SEU_UPLOAD_ID
+curl.exe http://localhost:3000/api/prescriptions/upload/SEU_UPLOAD_ID
 ```
 
 ## Abordagem
@@ -38,7 +37,6 @@ Utilizei a library Zod para a validação dos dados, dei uma lida em exemplos, m
 
 - O processamento é assíncrono com `setImmediate`.
 - Os dados ficam em memória, então ao reiniciar o servidor tudo é perdido.
-- O campo `frequency` aceita tanto número puro quanto formatos como `8/8h` e `12/12h`.
 
 ## 📄 Exemplos de CSV
 
